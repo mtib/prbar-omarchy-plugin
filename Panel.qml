@@ -33,7 +33,6 @@ Panel {
   property real notifyChangedAt: 0
   property real fetchStartedAt: 0
   readonly property string notifyMode: notify.mode
-  readonly property int notifyMinutes: notify.minutes || 0
   readonly property var tabs: [
     { label: "Direct", list: prState.direct },
     { label: "Team", list: prState.team },
@@ -68,6 +67,12 @@ Panel {
     Quickshell.execDetached(["bash", script, "set-notify", mode, String(minutes || 0)])
   }
 
+  property real nowSec: Date.now() / 1000
+  function remaining() {
+    var m = Math.max(1, Math.ceil((notify.until - nowSec) / 60))
+    return m >= 60 ? Math.floor(m / 60) + "h " + (m % 60) + "m" : m + "m"
+  }
+
   function toggle() { if (root.opened) root.close(); else { root.open(); root.refresh() } }
   function open() { root.controller.show() }
   function close() { root.controller.hide() }
@@ -87,6 +92,14 @@ Panel {
 
   Component.onCompleted: refresh()
   onOpenedChanged: if (opened) refresh()
+
+  Timer {
+    interval: 15000
+    running: root.opened
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.nowSec = Date.now() / 1000
+  }
 
   Timer {
     interval: root.refreshIntervalSec * 1000
@@ -413,32 +426,19 @@ Panel {
                   }
                 }
               }
-            }
 
-            Row {
-              visible: root.notifyMode !== "all"
-              spacing: Style.space(6)
-              Text {
-                anchors.verticalCenter: parent.verticalCenter
-                text: "Back to All after"
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
+              // Quiet mode without a timer: offer durations. With a timer: show it.
               Repeater {
-                model: [
-                  { minutes: 0, label: "never" },
-                  { minutes: 30, label: "30m" },
-                  { minutes: 60, label: "1h" },
-                  { minutes: 240, label: "4h" },
-                  { minutes: 480, label: "8h" }
-                ]
+                model: root.notifyMode !== "all" && root.notify.until <= 0
+                       ? [ { minutes: 30, label: "30m" }, { minutes: 60, label: "1h" },
+                           { minutes: 240, label: "4h" }, { minutes: 480, label: "8h" } ]
+                       : []
                 CursorSurface {
                   id: timerItem
                   required property var modelData
                   foreground: root.foreground
-                  hasCursor: timerMa.containsMouse || root.notifyMinutes === modelData.minutes
-                  implicitWidth: timerText.implicitWidth + Style.space(16)
+                  hasCursor: timerMa.containsMouse
+                  implicitWidth: timerText.implicitWidth + Style.space(14)
                   implicitHeight: timerText.implicitHeight + Style.spacing.rowPaddingX
                   MouseArea {
                     id: timerMa
@@ -451,11 +451,20 @@ Panel {
                     id: timerText
                     anchors.centerIn: parent
                     text: timerItem.modelData.label
-                    color: root.foreground
+                    color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                   }
                 }
+              }
+
+              Text {
+                visible: root.notifyMode !== "all" && root.notify.until > 0
+                anchors.verticalCenter: parent.verticalCenter
+                text: "back to All in " + root.remaining()
+                color: "orange"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
               }
             }
 
