@@ -1,0 +1,9 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck fetch.sh
+      - run: jq -e . manifest.json
