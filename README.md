@@ -26,20 +26,17 @@ reviews; `contributionsCollection` is not used because it silently drops private
 
 ## Notifications
 
-The bell in the panel footer cycles **All** (direct and team) → **Only direct** → **Off**. In a quiet
-mode a second button picks a lapse timer (30m, 1h, 4h, 8h, or until you change it) after which it
-returns to **All**. The pill shows `󰂛` and the bell turns orange while muted.
+Pick **All** (direct and team), **Only direct** or **Off** in the panel footer. In a quiet mode a second
+row sets when it lapses back to **All** (never, 30m, 1h, 4h, 8h). The pill shows `󰂛` while muted.
 
-- One notification per PR, the first time it appears in Direct or Team; clicking it opens the PR.
+- One notification per PR, the first time it appears in Direct or Team; clicking the toast opens the PR in your browser.
 - Drafts never notify; a draft flipped to ready does.
 - The first run seeds silently. Muted periods never build a backlog.
 - A PR that leaves the queue and is re-requested notifies again.
 
 State lives in `~/.local/state/prbar-omarchy/`.
 
-## Keys
 
-`r` refresh · `1` `2` `3` tabs · `h` history · right/middle-click the pill to refresh.
 
 ## Settings
 

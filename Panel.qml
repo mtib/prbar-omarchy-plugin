@@ -12,7 +12,7 @@ Panel {
   ipcTarget: "mtib.prbar"
   manageIpc: false
 
-  property var queue: ({ direct: [], team: [], drafts: [], today: 0, history: [], notify: { mode: "all", until: 0 } })
+  property var prState: ({ direct: [], team: [], drafts: [], today: 0, history: [], notify: { mode: "all", until: 0 } })
   property string lastError: ""
   property bool loaded: false
   property string _out: ""
@@ -27,16 +27,20 @@ Panel {
   readonly property string sortBy: String(setting("sortBy", "Recent activity"))
   readonly property string script: Quickshell.env("HOME") + "/.config/omarchy/plugins/mtib.prbar/fetch.sh"
 
-  readonly property int total: queue.direct.length + queue.team.length
+  readonly property int total: prState.direct.length + prState.team.length
   readonly property bool createdSort: sortBy === "Newest PR" || sortBy === "Oldest PR"
-  readonly property string notifyMode: queue.notify.mode
+  property var notify: ({ mode: "all", until: 0, minutes: 0 })
+  property real notifyChangedAt: 0
+  property real fetchStartedAt: 0
+  readonly property string notifyMode: notify.mode
+  readonly property int notifyMinutes: notify.minutes || 0
   readonly property var tabs: [
-    { label: "Direct", list: queue.direct },
-    { label: "Team", list: queue.team },
-    { label: "Drafts", list: queue.drafts }
+    { label: "Direct", list: prState.direct },
+    { label: "Team", list: prState.team },
+    { label: "Drafts", list: prState.drafts }
   ]
   readonly property var rows: sorted(tabs[tab].list)
-  readonly property var shownHistory: queue.history.slice(-historyDays)
+  readonly property var shownHistory: prState.history.slice(-historyDays)
   readonly property int historyMax: Math.max(1, Math.max.apply(null, shownHistory.map(function(d) { return d.count })))
 
   implicitWidth: button.implicitWidth
@@ -51,31 +55,17 @@ Panel {
   function refresh() {
     if (fetchProc.running) return
     _out = ""
+    fetchStartedAt = Date.now()
     fetchProc.command = ["bash", script]
     fetchProc.running = true
   }
 
   function setNotify(mode, minutes) {
-    notifyProc.command = ["bash", script, "set-notify", mode, String(minutes || 0)]
-    notifyProc.running = true
-  }
-
-  function cycleMode() {
-    setNotify(notifyMode === "all" ? "direct" : notifyMode === "direct" ? "off" : "all", 0)
-  }
-
-  function cycleTimer() {
-    var steps = [0, 30, 60, 240, 480]
-    var left = queue.notify.until > 0 ? Math.round((queue.notify.until - Date.now() / 1000) / 60) : 0
-    var cur = 0
-    for (var i = steps.length - 1; i > 0; i--) if (left > steps[i] - 15) { cur = i; break }
-    setNotify(notifyMode, steps[(cur + 1) % steps.length])
-  }
-
-  function timerLabel() {
-    if (queue.notify.until <= 0) return "until I change it"
-    var m = Math.max(1, Math.round((queue.notify.until - Date.now() / 1000) / 60))
-    return m >= 60 ? "~" + Math.round(m / 60) + "h left" : m + "m left"
+    // Persist via a detached script, apply locally right away.
+    notifyChangedAt = Date.now()
+    notify = { mode: mode, until: (mode !== "all" && minutes > 0) ? Date.now() / 1000 + minutes * 60 : 0,
+               minutes: mode !== "all" ? minutes : 0 }
+    Quickshell.execDetached(["bash", script, "set-notify", mode, String(minutes || 0)])
   }
 
   function toggle() { if (root.opened) root.close(); else { root.open(); root.refresh() } }
@@ -111,16 +101,19 @@ Panel {
     onExited: function(code) {
       if (code !== 0) { root.lastError = "gh query failed (is `gh auth login` done?)"; return }
       try {
-        root.queue = JSON.parse(root._out)
+        root.prState = JSON.parse(root._out)
+        // Ignore prefs from a fetch that began before the user's last change.
+        if (root.fetchStartedAt >= root.notifyChangedAt) {
+          var n = root.prState.notify
+          var left = n.until > 0 ? (n.until - Date.now() / 1000) / 60 : 0
+          var steps = [30, 60, 240, 480], m = 0
+          for (var k = 0; k < steps.length; k++) if (left > 0 && left <= steps[k] + 1) { m = steps[k]; break }
+          root.notify = { mode: n.mode, until: n.until, minutes: n.until > 0 ? m : 0 }
+        }
         root.lastError = ""
         root.loaded = true
       } catch (e) { root.lastError = "bad response" }
     }
-  }
-
-  Process {
-    id: notifyProc
-    onExited: root.refresh()
   }
 
   WidgetButton {
@@ -130,7 +123,7 @@ Panel {
     text: "󰊤 " + (root.loaded ? root.total : "…") + (root.notifyMode === "off" ? " 󰂛" : "")
     active: root.lastError !== "" || root.notifyMode !== "all"
     tooltipText: root.lastError !== "" ? root.lastError
-                 : root.queue.direct.length + " direct + " + root.queue.team.length + " team awaiting your review"
+                 : root.prState.direct.length + " direct + " + root.prState.team.length + " team awaiting your review"
     onPressed: function(b) {
       if (b === Qt.RightButton || b === Qt.MiddleButton) root.refresh()
       else root.toggle()
@@ -151,11 +144,6 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       onCloseRequested: root.close()
-      onTextKey: function(t) {
-        if (t === "r" || t === "R") root.refresh()
-        else if (t === "1" || t === "2" || t === "3") { root.showHistory = false; root.tab = parseInt(t) - 1 }
-        else if (t === "h" || t === "H") root.showHistory = !root.showHistory
-      }
 
       Flickable {
         id: flick
@@ -220,7 +208,7 @@ Panel {
               Text {
                 id: chipText
                 anchors.centerIn: parent
-                text: "󰍡 " + root.queue.today
+                text: "󰍡 " + root.prState.today
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -380,60 +368,101 @@ Panel {
             }
           }
 
-          // Footer: notification mode, optional lapse timer, refresh
-          RowLayout {
+          // Footer: explicit notification mode + lapse timer. State is applied
+          // locally at once; the script only persists it.
+          Column {
             width: parent.width
             spacing: Style.space(6)
 
-            CursorSurface {
-              foreground: root.foreground
-              hasCursor: bellMa.containsMouse
-              implicitWidth: bellText.implicitWidth + Style.space(20)
-              implicitHeight: bellText.implicitHeight + Style.spacing.rowPaddingX
-              MouseArea {
-                id: bellMa
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.cycleMode()
-              }
+            Row {
+              spacing: Style.space(6)
               Text {
-                id: bellText
-                anchors.centerIn: parent
-                text: (root.notifyMode === "off" ? "󰂛 Off" : "󰂚 " + (root.notifyMode === "direct" ? "Only direct" : "All"))
-                color: root.notifyMode === "all" ? root.foreground : "orange"
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-            }
-
-            CursorSurface {
-              visible: root.notifyMode !== "all"
-              foreground: root.foreground
-              hasCursor: timerMa.containsMouse
-              implicitWidth: timerText.implicitWidth + Style.space(20)
-              implicitHeight: timerText.implicitHeight + Style.spacing.rowPaddingX
-              MouseArea {
-                id: timerMa
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.cycleTimer()
-              }
-              Text {
-                id: timerText
-                anchors.centerIn: parent
-                text: root.timerLabel()
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Notify"
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
+              Repeater {
+                model: [
+                  { mode: "all", label: "All" },
+                  { mode: "direct", label: "Only direct" },
+                  { mode: "off", label: "Off" }
+                ]
+                CursorSurface {
+                  id: modeItem
+                  required property var modelData
+                  foreground: root.foreground
+                  hasCursor: modeMa.containsMouse || root.notifyMode === modelData.mode
+                  implicitWidth: modeText.implicitWidth + Style.space(20)
+                  implicitHeight: modeText.implicitHeight + Style.spacing.rowPaddingX
+                  MouseArea {
+                    id: modeMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.setNotify(modeItem.modelData.mode, 0)
+                  }
+                  Text {
+                    id: modeText
+                    anchors.centerIn: parent
+                    text: modeItem.modelData.label
+                    color: root.notifyMode === modeItem.modelData.mode && modeItem.modelData.mode !== "all" ? "orange" : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+              }
             }
 
-            Item { Layout.fillWidth: true }
+            Row {
+              visible: root.notifyMode !== "all"
+              spacing: Style.space(6)
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Back to All after"
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              Repeater {
+                model: [
+                  { minutes: 0, label: "never" },
+                  { minutes: 30, label: "30m" },
+                  { minutes: 60, label: "1h" },
+                  { minutes: 240, label: "4h" },
+                  { minutes: 480, label: "8h" }
+                ]
+                CursorSurface {
+                  id: timerItem
+                  required property var modelData
+                  foreground: root.foreground
+                  hasCursor: timerMa.containsMouse || root.notifyMinutes === modelData.minutes
+                  implicitWidth: timerText.implicitWidth + Style.space(16)
+                  implicitHeight: timerText.implicitHeight + Style.spacing.rowPaddingX
+                  MouseArea {
+                    id: timerMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.setNotify(root.notifyMode, timerItem.modelData.minutes)
+                  }
+                  Text {
+                    id: timerText
+                    anchors.centerIn: parent
+                    text: timerItem.modelData.label
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+              }
+            }
 
             Text {
-              text: root.lastError !== "" ? root.lastError : "r refresh · 1-3 tabs · h history"
+              visible: root.lastError !== ""
+              width: parent.width
+              text: root.lastError
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption

@@ -33,13 +33,6 @@ if [[ ${1:-} == set-notify ]]; then
   exit 0
 fi
 
-# Detached helper: one notification, click opens the PR.
-if [[ ${1:-} == _notify ]]; then
-  action=$(notify-send -a prbar -A open=Open -w "$3" "$4" 2>/dev/null || true)
-  [[ $action == open || $action == default ]] && exec omarchy-launch-browser "$2"
-  exit 0
-fi
-
 load_prefs
 
 LOGIN=$(gh api user --jq .login)
@@ -98,7 +91,9 @@ if [[ -f $SEEN ]]; then
     url=$(jq -r .url <<<"$p")
     title="$(jq -r '"\(.repo) #\(.number)"' <<<"$p")"
     body="$(jq -r '"\(.title)\nfrom \(.author)"' <<<"$p")"
-    setsid -f "$0" _notify "$url" "$title" "$body" >/dev/null 2>&1 </dev/null
+    # Omarchy runs omarchy-exec-argv when the toast is clicked, even from history.
+    notify-send -a prbar -h "string:omarchy-exec-argv:$(jq -nc --arg u "$url" '["omarchy-launch-browser",$u]')" \
+      "$title" "$body" >/dev/null 2>&1 || true
   done
 fi
 jq -c '[.direct[].id, .team[].id]' <<<"$OUT" >"$SEEN"
